@@ -173,22 +173,20 @@ private fun coursesFromRawData(rawList: List<Element>): Set<CourseData> {
         val duration = element.attr("colspan").toIntOrNull() ?: 1
         val returnVal = Triple(startIndex, duration, element)
 
-        // Kada je neko predavanje 2h ili 3h, početni indeks treba dodatno da se poveća.
+        // indeks se pomera za dužinu časa
         startIndex += duration
 
-        returnVal
+        return@map returnVal
 
     }.flatMap { triple: Triple<Int, Int, Element> ->
         // Ovo će razdvojiti časove na pojedinačne, ako se u isto vreme održava više časova na istom rasporedu
         when {
-
-            // Ako je pronađena tabela, radi se o tabeli vežbi, ili praznoj tabeli
             triple.third.selectFirst("table") != null ->
                 triple.third.selectFirst("table").selectFirst("tbody").select("tr").map {
                     Triple(triple.first, triple.second, it)
                 }
 
-            // Ako element ima `colspan` atribut, znači da je element predavanja
+            // Ako element ima `colspan` atribut, znači da je to već jedan blok (i ne treba razlagati na više blokova)
             triple.third.hasAttr("colspan") -> listOf(triple)
 
             // Nije prepoznat element
@@ -199,27 +197,28 @@ private fun coursesFromRawData(rawList: List<Element>): Set<CourseData> {
         it.third.text().isNullOrBlank()
     }.map {
         // Ovo će pretvoriti "sirovo" Triple<Int, Int, Element> u CourseData
-        val innerHtml = it.third.selectFirst("small")?.html() ?: it.third.html()
-        val dataList = innerHtml.split("<br>").map { str -> str.trimIndent() }
+
+        // Neki elementi su omotani "small" elementom
+        val innerHtml = (it.third.selectFirst("small") ?: it.third).html()
+        val dataList = innerHtml.split("<br>").map(String::trimIndent)
         val title = dataList[0]
         // Nekada postoji i informacija o grupi ("GR1", "GR2"...), pa ima 4 elementa umesto 3.
         val lecturer = if (dataList.size == 3) dataList[1] else dataList[2]
         var classroom = if (dataList.size == 3) dataList[2] else dataList[3]
 
         // Ako naziv učionice sadrži '&' (e.g. "ЈАГ 3&4"), pretvoriti HTML oznaku tog znaka u taj znak
-        if (classroom.contains("&amp;")) {
-            classroom = classroom.replace("&amp;", "&")
-        }
+        classroom = classroom.replace("&amp;", "&")
 
         CourseData(it.first, it.second, title, lecturer, classroom)
 
-    }.fold(mutableSetOf()) { acc, current ->
-        // Ovo će spojiti više časova vežbi u jedan čas vežbi
+    }.fold(mutableSetOf()) { acc: MutableSet<CourseData>, current: CourseData ->
+        // Ovo će spojiti više uzastopnih časova u isti čas
 
-        val last = acc.lastOrNull()
+        // Pokušaj da pronađeš čas koje je neposredno pre tekućeg časa
+        val last = acc.find { it == current && it.startIndex + it.duration == current.startIndex }
 
         // Ako je poslednji čas isti kao i tekući, spoji njihove dužine
-        if (last == current) {
+        if (last != null) {
             last.duration += current.duration
         } else {
             acc.add(current)
